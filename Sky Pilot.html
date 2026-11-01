@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sky Pilot</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e8f6ff;--ink:#12324a;--card:#fff8e6;--btn:#ffa31a;--btn2:#4fb52f;--btn3:#d9534f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1a26;--ink:#e6f2ff;--card:#23323f}}
+:root[data-theme="dark"]{--bg:#0e1a26;--ink:#e6f2ff;--card:#23323f}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Press Start 2P",ui-monospace,monospace;display:flex;align-items:center;justify-content:center;padding:8px;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#wrap{position:relative;width:100%;max-width:960px;aspect-ratio:16/9;border-radius:12px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+#pause{position:absolute;top:3.5%;right:1.8%;width:6%;min-width:34px;aspect-ratio:1;border:3px solid #fff;border-radius:10px;background:#ffa31a;box-shadow:0 3px 0 #b86a00;cursor:pointer;display:flex;gap:18%;align-items:center;justify-content:center;padding:0}
+#pause i{display:block;width:16%;height:46%;background:#fff;border-radius:2px}
+#ov{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(10,30,50,.45);backdrop-filter:blur(2px)}
+#ov.show{display:flex}
+.card{background:var(--card);color:var(--ink);border:4px solid #12324a;border-radius:14px;padding:clamp(12px,3vw,28px);text-align:center;width:min(86%,440px);box-shadow:0 6px 0 rgba(0,0,0,.35)}
+.card h1{font-size:clamp(14px,3.4vw,28px);margin:0 0 10px;line-height:1.4}
+.card p{font-size:clamp(7px,1.5vw,11px);line-height:1.9;margin:0 0 14px}
+.card button{display:block;width:100%;margin:8px 0 0;padding:clamp(8px,1.8vw,14px);font:inherit;font-size:clamp(9px,1.9vw,14px);color:#fff;background:var(--btn);border:3px solid #12324a;border-radius:10px;box-shadow:0 4px 0 rgba(0,0,0,.35);cursor:pointer}
+.card button:active{transform:translateY(3px);box-shadow:0 1px 0 rgba(0,0,0,.35)}
+.card button.g{background:var(--btn2)}.card button.r{background:var(--btn3)}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="960" height="540"></canvas>
+  <button id="pause" aria-label="Pause"><i></i><i></i></button>
+  <div id="ov"><div class="card" id="card"></div></div>
+</div>
+<script>
+(function(){
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=960,H=540,GROUND=70,PX=200,PW=90,GAP=175,CAPH=34;
+const $=id=>document.getElementById(id);
+let state='ready',plane,pipes,score,lives,inv,speed,bgx=0,shake=0,smoke=[],frame=0,last=0,best=0,flash=0;
+try{best=+localStorage.getItem('skypilot_best')||0}catch(e){}
+function saveBest(){try{localStorage.setItem('skypilot_best',best)}catch(e){}}
+
+// Background data (seeded, tileable)
+let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+const blds=[];for(let x=0;x<1920;){const w=50+rnd()*60,h=70+rnd()*190;blds.push({x,w,h});x+=w+8+rnd()*20}
+const bushes=[];for(let x=-20;x<980;x+=60+rnd()*30)bushes.push({x,r:45+rnd()*30});
+const clouds=[{x:120,y:90,s:1.1,v:.15},{x:520,y:230,s:.9,v:.2},{x:760,y:70,s:1.2,v:.12},{x:330,y:310,s:.7,v:.25},{x:900,y:160,s:.8,v:.18}];
+
+function reset(){plane={y:(H-GROUND)/2,vy:0,ang:0};pipes=[];score=0;lives=3;inv=0;speed=2.8;smoke=[];shake=0;flash=0}
+function flap(){if(state==='play')plane.vy=-7.4}
+function startPlay(){reset();state='play';hide();flap()}
+function newGame(){reset();state='ready';show('ready')}
+function pauseToggle(){if(state==='play'){state='pause';show('pause')}else if(state==='pause'){state='play';hide()}}
+
+function show(k){
+  const o=$('ov'),c=$('card');o.classList.add('show');
+  if(k==='ready')c.innerHTML='<h1>SKY PILOT</h1><p>Tap / Space / ↑ dabao aur udo.<br>Pipes se bacho, 3 jaan hain!<br>Best: '+best+'</p><button class="g" data-a="start">▶ START</button>';
+  if(k==='pause')c.innerHTML='<h1>PAUSED</h1><p>Score: '+score+' &nbsp; Lives: '+lives+'</p><button class="g" data-a="resume">▶ RESUME</button><button data-a="replay">↻ REPLAY</button><button class="r" data-a="new">✦ NEW GAME</button>';
+  if(k==='over')c.innerHTML='<h1>GAME OVER</h1><p>Score: '+score+'<br>Best: '+best+'</p><button class="g" data-a="replay">↻ REPLAY</button><button class="r" data-a="new">✦ NEW GAME</button>';
+}
+function hide(){$('ov').classList.remove('show')}
+$('card').addEventListener('click',e=>{const a=e.target.dataset&&e.target.dataset.a;if(!a)return;
+  if(a==='start'||a==='replay')startPlay();else if(a==='resume')pauseToggle();else if(a==='new')newGame()});
+$('pause').addEventListener('click',e=>{e.stopPropagation();if(state==='play'||state==='pause')pauseToggle()});
+cv.addEventListener('pointerdown',e=>{e.preventDefault();if(state==='play')flap()});
+addEventListener('keydown',e=>{
+  if(['Space','ArrowUp','KeyW'].includes(e.code)){e.preventDefault();if(state==='play')flap();else if(state==='ready')startPlay()}
+  else if(e.code==='KeyP'||e.code==='Escape'){if(state==='play'||state==='pause')pauseToggle()}
+  else if(e.code==='KeyR'&&(state==='over'||state==='pause'))startPlay();
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&state==='play')pauseToggle()});
+
+function hit(){
+  lives--;inv=100;shake=12;flash=8;
+  if(lives<=0){state='over';if(score>best){best=score;saveBest()}setTimeout(()=>{if(state==='over')show('over')},600)}
+}
+function update(dt){
+  frame++;
+  speed=2.8+Math.min(score*.06,1.8);
+  plane.vy+=.42*dt;plane.y+=plane.vy*dt;
+  plane.ang=Math.max(-.45,Math.min(.7,plane.vy*.06));
+  bgx+=speed*dt;
+  // pipes
+  const lp=pipes[pipes.length-1];
+  if(!lp||lp.x<W-320){const gy=GAP/2+55+Math.random()*(H-GROUND-GAP-110);pipes.push({x:W+10,gy,passed:false})}
+  for(const p of pipes){p.x-=speed*dt;if(!p.passed&&p.x+PW<PX-28){p.passed=true;score++}}
+  while(pipes.length&&pipes[0].x<-PW-20)pipes.shift();
+  // collisions
+  const L=PX-28,R=PX+30,T=plane.y-13,B=plane.y+14;
+  let hitNow=false,env=false;
+  if(B>H-GROUND){env=true;plane.y=H-GROUND-60;plane.vy=-6}
+  else if(T<0){env=true;plane.y=14;plane.vy=1}
+  if(inv<=0){
+    if(env)hitNow=true;
+    for(const p of pipes){if(R>p.x&&L<p.x+PW&&(T<p.gy-GAP/2||B>p.gy+GAP/2)){hitNow=true;break}}
+    if(hitNow)hit();
+  }else{inv-=dt;if(env){/* bounce while invulnerable */}}
+  if(shake>0)shake-=dt;if(flash>0)flash-=dt;
+  // smoke
+  if(frame%3===0)smoke.push({x:PX-42,y:plane.y+4,r:7,a:1});
+  for(const s of smoke){s.x-=speed*dt*1.1;s.r+=.12*dt;s.a-=.012*dt}
+  smoke=smoke.filter(s=>s.a>0);
+  for(const c of clouds){c.x-=c.v*dt*(1+speed*.2);if(c.x<-120)c.x=W+100}
+}
+
+// ---------- drawing ----------
+function cloud(x,y,s,a){ctx.save();ctx.globalAlpha=a==null?1:a;ctx.fillStyle='#fff';ctx.beginPath();
+  ctx.arc(x,y,22*s,0,7);ctx.arc(x+28*s,y-16*s,28*s,0,7);ctx.arc(x+60*s,y-4*s,24*s,0,7);ctx.arc(x+82*s,y+4*s,16*s,0,7);ctx.arc(x+10*s,y+6*s,18*s,0,7);
+  ctx.fill();ctx.fillRect(x-4*s,y+2*s,86*s,20*s);ctx.restore()}
+function heart(x,y,full){const g=['0110110','1111111','1111111','0111110','0011100','0001000'],c=6;
+  ctx.fillStyle='#fff';for(let r=0;r<6;r++)for(let q=0;q<7;q++)if(g[r][q]==='1')ctx.fillRect(x+q*c-2,y+r*c-2,c+4,c+4);
+  for(let r=0;r<6;r++)for(let q=0;q<7;q++)if(g[r][q]==='1'){ctx.fillStyle=full?'#e8242b':'#7b8794';ctx.fillRect(x+q*c,y+r*c,c,c)}
+  if(full){ctx.fillStyle='#ff8a8a';ctx.fillRect(x+c,y+c*.2,c,c)}}
+function txt(t,x,y,size,align){ctx.font=size+'px "Press Start 2P",monospace';ctx.textAlign=align||'center';ctx.textBaseline='middle';
+  ctx.lineWidth=8;ctx.strokeStyle='#12324a';ctx.lineJoin='round';ctx.strokeText(t,x,y);ctx.fillStyle='#fff';ctx.fillText(t,x,y)}
+function pipe(p){
+  const x=p.x,top=p.gy-GAP/2,bot=p.gy+GAP/2;
+  const body=(y,h)=>{ctx.fillStyle='#12324a';ctx.fillRect(x-3+8,y,PW-16+6,h);ctx.fillStyle='#4fbf2a';ctx.fillRect(x+8,y,PW-16,h);
+    ctx.fillStyle='#9cf060';ctx.fillRect(x+14,y,12,h);ctx.fillStyle='#2f8f17';ctx.fillRect(x+PW-26,y,10,h)};
+  const cap=y=>{ctx.fillStyle='#12324a';ctx.fillRect(x-6,y-3,PW+12,CAPH+6);ctx.fillStyle='#5cd02f';ctx.fillRect(x-3,y,PW+6,CAPH);
+    ctx.fillStyle='#a6f56a';ctx.fillRect(x+4,y+3,14,CAPH-6);ctx.fillStyle='#2f8f17';ctx.fillRect(x+PW-14,y+3,12,CAPH-6)};
+  body(0,top-CAPH);cap(top-CAPH);
+  body(bot+CAPH,H-GROUND-bot-CAPH);cap(bot);
+}
+function drawPlane(){
+  if(inv>0&&Math.floor(inv/5)%2===0&&state!=='over')return;
+  ctx.save();ctx.translate(PX,plane.y);ctx.rotate(plane.ang);
+  const o='#12324a';
+  // tail
+  ctx.fillStyle='#d62828';ctx.beginPath();ctx.moveTo(-34,-4);ctx.lineTo(-48,-22);ctx.lineTo(-32,-18);ctx.lineTo(-22,-4);ctx.closePath();ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=o;ctx.stroke();
+  // body
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(0,0,40,15,0,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#e03030';ctx.fillRect(-34,2,66,5);
+  // nose
+  ctx.fillStyle='#d62828';ctx.beginPath();ctx.ellipse(34,0,7,10,0,0,7);ctx.fill();
+  // cockpit
+  ctx.fillStyle='#4ab8ff';ctx.beginPath();ctx.ellipse(4,-11,14,9,-.1,Math.PI,0);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#fff';ctx.fillRect(3,-18,2,8);
+  // wing
+  ctx.fillStyle='#e9eef2';ctx.beginPath();ctx.moveTo(-6,5);ctx.lineTo(-24,14);ctx.lineTo(14,16);ctx.lineTo(22,5);ctx.closePath();ctx.fill();ctx.stroke();
+  // wheel
+  ctx.fillStyle='#444';ctx.beginPath();ctx.arc(2,20,6,0,7);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(2,12);ctx.lineTo(2,16);ctx.stroke();
+  // propeller
+  const pa=Math.sin(frame*1.4)*26;ctx.fillStyle='rgba(90,100,115,.75)';ctx.beginPath();ctx.ellipse(41,0,3,Math.abs(pa)+4,0,0,7);ctx.fill();
+  ctx.restore();
+}
+function draw(){
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#3db8ff');g.addColorStop(1,'#a8e4ff');
+  ctx.save();
+  if(shake>0)ctx.translate((Math.random()-.5)*8,(Math.random()-.5)*8);
+  ctx.fillStyle=g;ctx.fillRect(-10,-10,W+20,H+20);
+  for(const c of clouds)cloud(c.x,c.y,c.s);
+  // skyline
+  let off=-((bgx*.15)%1920);ctx.fillStyle='#6aaee8';
+  for(let t=0;t<2;t++){for(const b of blds){const bx=off+t*1920+b.x,by=H-GROUND-b.h;
+    ctx.fillStyle='#6aaee8';ctx.fillRect(bx,by,b.w,b.h);ctx.fillStyle='#8cc6f4';
+    for(let yy=by+10;yy<H-GROUND-20;yy+=20)for(let xx=bx+8;xx<bx+b.w-12;xx+=16)ctx.fillRect(xx,yy,8,10)}}
+  // bushes
+  off=-((bgx*.4)%960);
+  for(let t=0;t<2;t++)for(const b of bushes){ctx.fillStyle='#4aa578';ctx.beginPath();ctx.arc(off+t*960+b.x,H-GROUND+10,b.r,Math.PI,0);ctx.fill()}
+  ctx.fillStyle='#4aa578';ctx.fillRect(0,H-GROUND-4,W,10);
+  // pipes
+  for(const p of pipes)pipe(p);
+  // smoke
+  for(const s of smoke){ctx.globalAlpha=Math.max(0,s.a);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,7);ctx.fill()}ctx.globalAlpha=1;
+  drawPlane();
+  // ground
+  const gx=-((bgx)%32);
+  ctx.fillStyle='#c97a45';ctx.fillRect(0,H-GROUND+14,W,GROUND);
+  ctx.fillStyle='#b5683a';for(let x=gx;x<W;x+=32)for(let y=H-GROUND+26;y<H;y+=24)ctx.fillRect(x+((y/24|0)%2)*16,y,14,8);
+  ctx.fillStyle='#7be03a';ctx.fillRect(0,H-GROUND,W,14);ctx.fillStyle='#b8f76a';ctx.fillRect(0,H-GROUND,W,4);
+  ctx.fillStyle='#4fb52f';for(let x=gx;x<W;x+=16)ctx.fillRect(x,H-GROUND+14,8,6);
+  ctx.restore();
+  // HUD
+  for(let i=0;i<3;i++)heart(22+i*56,24,i<lives);
+  txt('Score: '+score,W/2,52,34);
+  if(flash>0){ctx.fillStyle='rgba(255,60,60,'+(flash/20)+')';ctx.fillRect(0,0,W,H)}
+}
+function loop(ts){
+  const dt=Math.min((ts-last)/16.67||1,2.5);last=ts;
+  if(state==='play')update(dt);
+  else if(state==='ready'){bgx+=1*dt;frame++;plane.y=(H-GROUND)/2+Math.sin(frame*.06)*10;plane.ang=0;for(const c of clouds){c.x-=c.v*dt;if(c.x<-120)c.x=W+100}}
+  else if(state==='over'){plane.vy+=.42*dt;plane.y=Math.min(plane.y+plane.vy*dt,H-GROUND-18);plane.ang=Math.min(plane.ang+.03*dt,1.2);if(shake>0)shake-=dt}
+  draw();requestAnimationFrame(loop);
+}
+reset();show('ready');requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
